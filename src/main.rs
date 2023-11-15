@@ -3,17 +3,26 @@ use std::io::BufReader;
 use std::rc::Rc;
 
 use crate::halo2_base::{
+    utils::{value_to_option, fs::gen_srs, ScalarField}, 
     gates::circuit::{builder::BaseCircuitBuilder, BaseCircuitParams},
     AssignedValue,
     utils::BigPrimeField, 
 };
 
 pub mod ecc;
-use ecc::Halo2Lib;
-use halo2_base::utils::halo2;
+use ecc::{Halo2Lib, JsCircuitValue256};
+use halo2_base::halo2_proofs::halo2curves::ff::PrimeField;
+
+use halo2_ecc::{
+    fields::{fp::{FpConfig}, 
+    fp2::Fp2Chip, fp12::Fp12Chip, FieldChip}, 
+    ecc::{EccChip}, 
+    bn254::pairing::PairingChip
+};
 use halo2_proofs::{
     dev::MockProver,
-    halo2curves::bn256::{Bn256, Fr, G1Affine},
+    circuit::{Value},
+    halo2curves::bn256::{Bn256, Fr, G1Affine, G2Affine, Fq},
     plonk::*,
     poly::{
         commitment::{Params, ParamsProver},
@@ -36,6 +45,55 @@ use tsify::Tsify;
 pub use halo2_base;
 pub use halo2_base::halo2_proofs;
 
+struct EigenLayerConfig<F: BigPrimeField> {
+    base_field_chip: FpConfig<F>,
+    instance: Column<Instance>
+}
+
+#[derive(Clone)]
+struct EigenLayerCircuit<F: ScalarField> {
+    // constant:
+    g1_one: G1Affine,
+    g2_one: G2Affine,
+
+    // Public inputs:
+    // 
+    quorumG1Apk: Value<G1Affine>,
+    allOperatorsCircuitG1Apk: Value<G1Affine>,
+    // sum of pubkeys of ALL operators (including non-signers)
+    aggregate_pubkey: Value<G2Affine>,
+    taskResponseDigestBn254G2: Value<G2Affine>,
+    aggregate_signature: Value<G1Affine>,
+    non_signer: Vec<Value<F>>,
+
+    non_signer_pubkeys: Vec<Value<G2Affine>>, 
+    // non_signer_stake[i] is the stake s_j of j = non_signer[i]
+    non_signer_stake: Vec<Value<F>>,
+
+    // Public output:
+    // 
+    // H - R(alpha)[1]_1 - Z(alpha) pi_H + alpha pi'_H is a G1 point
+    verifier_point: G1Affine,
+    aggregate_non_signer_stake: F,
+}
+
+impl EigenLayerCircuit<Fr> {
+    fn rand(num_non_signers: usize) -> Self {
+        let mut rng = rand::thread_rng(); 
+        Self { 
+            g1_one: G1Affine::generator(), 
+            g2_one: G2Affine::generator(), 
+            quorumG1Apk: Value::known(G1Affine::random(&mut rng)),
+            allOperatorsCircuitG1Apk: Value::known(G1Affine::random(&mut rng)),
+            aggregate_pubkey: Value::known(G2Affine::random(&mut rng)), 
+            taskResponseDigestBn254G2: Value::known(G2Affine::random(&mut rng)),
+            aggregate_signature: Value::known(G1Affine::random(&mut rng)), 
+            non_signer: (0..num_non_signers).map(|i| Value::known(Fr::from(2* i as u64))).collect(), 
+            non_signer_pubkeys: (0..num_non_signers).map(|_| Value::known(G2Affine::random(&mut rng))).collect(), 
+            verifier_point: G1Affine::random(&mut rng), 
+        }
+    }
+}
 
 
 fn main() {
@@ -45,41 +103,29 @@ fn main() {
     let mut builder = circuit.borrow_mut();
     let ctx = builder.main(0);
     let g1_chip = EccChip::new(&fq_chip);
-    let halo2Lib = Halo2Lib::new(circuit);
-    let fq_chip = halo2Lib.bn254_fq_chip();
     
-    let taskResponseDigestG2CoordsXC0 : BigPrimeField = 0;
-    let taskResponseDigestG2CoordsXC1 : BigPrimeField = 0;
-    let taskResponseDigestG2CoordsYC0 : BigPrimeField = 0;
-    let taskResponseDigestG2CoordsYC1 : BigPrimeField = 0;
-    let taskResponseDigestG2CoordsYC12 : u64 = 0;
+    let circuit = EigenLayerCircuit::<Fr>::rand(100); 
+    let signers_g1_apk;
+    if circuit.non_signer_pubkeys.len() > 0 {
+        let nonsigners_g1_apk = g1_chip.sum::<G1Affine>(builder.borrow_mut().main(0), circuit.non_signer_pubkeys);
+        nonsigners_g1_apk = g1_chip.sub_equal::<G1Affine>(builder.borrow_mut().main(0), circuit.allOperatorsCircuitG1Apk, nonsigners_g1_apk);
+
+    } else {
+        signers_g1_apk = circuit.allOperatorsCircuitG1Apk;
+    }
 
 
-    let aggSigG2CoordsXC0 : BigPrimeField = 0;
-    let aggSigG2CoordsXC1 : BigPrimeField = 0;
-    let aggSigG2CoordsYC0 : BigPrimeField = 0;
-    let aggSigG2CoordsYC1 : BigPrimeField = 0;
+    let fq_chip = self.bn254_fq_chip();
+    let g1_chip = EccChip::new(&fq_chip);
+    let neg_rhs_g1 = g1_chip.negate(ctx, circuit.g1_one.0);
+    let pairing_chip = PairingChip::new(&fq_chip);
 
-    let taskCreatedBlock : BigPrimeField = 9961355;
-    let blsPubkeyRegistryAddr: BigPrimeField = 0x7c46B99d6182dACCbeb3D82Eaff2Dc3266da7B02;
-    let quorumG1ApkXSlot: BigPrimeField = 3;
-    let quorumG1ApkYSlot: BigPrimeField = 4;
-
-    let blsPubkeyCompendiumAddr: BigPrimeField = 0x40971B1c11c71D60e0e18E0B400a4ADD2485961F;
-    let operatorToG1PubkeyXSlot: BigPrimeField = 0;
-    let operatorToG1PubkeyYSlot: BigPrimeField = 1;
-    let nonsignersAddrs: [BigPrimeField] = [];
-
-
-    let taskResponseDigestG2Coords = halo2Lib.load_bn254_g2(taskResponseDigestG2CoordsXC0, 
-        taskResponseDigestG2CoordsXC1, taskResponseDigestG2CoordsYC0, taskResponseDigestG2CoordsYC1);
-
-    let aggSigG2Coords = halo2Lib.load_bn254_g2(aggSigG2CoordsXC0, 
-        aggSigG2CoordsXC1, aggSigG2CoordsYC0, aggSigG2CoordsYC1);
-
-    let quorumG1ApkSlot = halo2Lib.load_bn254_g1(quorumG1ApkXSlot, quorumG1ApkYSlot);
-    let operatorToG1PubkeySlot = halo2Lib.load_bn254_g1(operatorToG1PubkeyXSlot, operatorToG1PubkeyYSlot);
-
+    let multi_paired = pairing_chip.multi_miller_loop(ctx, vec![(&signers_g1_apk.0, &circuit.taskResponseDigestBn254G2.0), (&neg_rhs_g1, &circuit.aggregate_signature.0)]);
+    let fq12_chip = Bn254Fq12Chip::new(&fq_chip);
+    let result = fq12_chip.final_exp(ctx, multi_paired);
+    let fq12_one = fq12_chip.load_constant(ctx, Bn254Fq12::one());
+    let verification_result = fq12_chip.is_equal(ctx, result, fq12_one);
+    verification_result.cell.unwrap().offset
     
 
 }
