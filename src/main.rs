@@ -67,14 +67,11 @@ struct EigenLayerCircuit<F: ScalarField> {
     non_signer: Vec<Value<F>>,
 
     non_signer_pubkeys: Vec<Value<G2Affine>>, 
-    // non_signer_stake[i] is the stake s_j of j = non_signer[i]
-    non_signer_stake: Vec<Value<F>>,
 
     // Public output:
     // 
     // H - R(alpha)[1]_1 - Z(alpha) pi_H + alpha pi'_H is a G1 point
     verifier_point: G1Affine,
-    aggregate_non_signer_stake: F,
 }
 
 impl EigenLayerCircuit<Fr> {
