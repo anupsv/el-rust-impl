@@ -10,6 +10,8 @@ use crate::halo2_base::{
 };
 
 use halo2_base::gates::RangeChip;
+use halo2_base::halo2_proofs::halo2curves::CurveAffine;
+use halo2_base::halo2_proofs::halo2curves::bn256::{G1, Fq12};
 use halo2_base::halo2_proofs::halo2curves::ff::PrimeField;
 
 use halo2_ecc::bigint::ProperCrtUint;
@@ -63,14 +65,14 @@ struct EigenLayerCircuit<F: ScalarField> {
     // Public inputs:
     // 
     quorumG1Apk: Value<G1Affine>,
-    allOperatorsCircuitG1Apk: Value<G1Affine>,
+    allOperatorsCircuitG1Apk: G1Affine,
     // sum of pubkeys of ALL operators (including non-signers)
     aggregate_pubkey: Value<G2Affine>,
-    taskResponseDigestBn254G2: Value<G2Affine>,
+    taskResponseDigestBn254G2: G2Affine,
     aggregate_signature: G2Affine,
     non_signer: Vec<Value<F>>,
 
-    non_signer_pubkeys: Vec<G2Affine>, 
+    non_signer_pubkeys: Vec<G1Affine>, 
 
     // Public output:
     // 
@@ -85,12 +87,12 @@ impl EigenLayerCircuit<Fr> {
             g1_one: G1Affine::generator(), 
             g2_one: G2Affine::generator(), 
             quorumG1Apk: Value::known(G1Affine::random(&mut rng)),
-            allOperatorsCircuitG1Apk: Value::known(G1Affine::random(&mut rng)),
+            allOperatorsCircuitG1Apk: G1Affine::random(&mut rng),
             aggregate_pubkey: Value::known(G2Affine::random(&mut rng)), 
-            taskResponseDigestBn254G2: Value::known(G2Affine::random(&mut rng)),
+            taskResponseDigestBn254G2: G2Affine::random(&mut rng),
             aggregate_signature: G2Affine::random(&mut rng), 
             non_signer: (0..num_non_signers).map(|i| Value::known(Fr::from(2* i as u64))).collect(), 
-            non_signer_pubkeys: (0..num_non_signers).map(|_| G2Affine::random(&mut rng)).collect(), 
+            non_signer_pubkeys: (0..num_non_signers).map(|_| G1Affine::random(&mut rng)).collect(), 
             verifier_point: G1Affine::random(&mut rng), 
         }
     }
@@ -116,32 +118,33 @@ fn main() {
     let g2_chip = EccChip::new(&fq2_chip);
     
     let el_circuit = EigenLayerCircuit::<Fr>::rand(10); 
-    // let signers_g1_apk;
+    let signers_g1_apk;
     if el_circuit.non_signer_pubkeys.len() > 0 {
 
-        let g2_points: Vec<_> = el_circuit.non_signer_pubkeys
+        let g1_points: Vec<_> = el_circuit.non_signer_pubkeys
             .into_iter()
-            .map(|point| g2_chip.assign_point::<G2Affine>(circuit.main(0), point))
+            .map(|point| g1_chip.assign_point::<G1Affine>(circuit.main(0), point))
             .collect();
-
-        let nonsigners_g2_apk = g2_chip.sum::<G2Affine>(circuit.main(0), g2_points.into_iter());
-        // nonsigners_g2_apk = g2_chip.sub_unequal::<G2Affine>(circuit.main(0), el_circuit.allOperatorsCircuitG1Apk, nonsigners_g2_apk, true);
+        let all_operators_circuit_g1_apk = g1_chip.assign_point::<G1Affine>(circuit.main(0), el_circuit.allOperatorsCircuitG1Apk);
+        let nonsigners_g1_apk = g1_chip.sum::<G1Affine>(circuit.main(0), g1_points.into_iter());
+        signers_g1_apk = g1_chip.sub_unequal(circuit.main(0), all_operators_circuit_g1_apk, nonsigners_g1_apk, true);
 
     } else {
-        // signers_g1_apk = circuit.allOperatorsCircuitG1Apk;
+        signers_g1_apk = g1_chip.assign_point::<G1Affine>(circuit.main(0), el_circuit.allOperatorsCircuitG1Apk);
     }
 
-    let assigned = g1_chip.assign_point::<G1Affine>(circuit.main(0), el_circuit.g1_one);
-    let neg_rhs_g1 = g1_chip.negate(circuit.main(0), assigned);
+    let g1_generator = g1_chip.assign_point::<G1Affine>(circuit.main(0), el_circuit.g1_one);
+    let neg_rhs_g1 = g1_chip.negate(circuit.main(0), g1_generator);
     let pairing_chip = PairingChip::new(&fq_chip);
 
-    let test = g2_chip.assign_point::<G2Affine>(circuit.main(0), el_circuit.aggregate_signature);
+    let aggregate_signature = g2_chip.assign_point::<G2Affine>(circuit.main(0), el_circuit.aggregate_signature);
     
-    let multi_paired = pairing_chip.multi_miller_loop(circuit.main(0), vec![(el_circuit.signers_g1_apk, &circuit.taskResponseDigestBn254G2), (&neg_rhs_g1, &test)]);
-    // let fq12_chip = Bn254Fq12Chip::new(&fq_chip);
-    // let result = fq12_chip.final_exp(ctx, multi_paired);
-    // let fq12_one = fq12_chip.load_constant(ctx, Bn254Fq12::one());
-    // let verification_result = fq12_chip.is_equal(ctx, result, fq12_one);
+    let task_response_digest_bn254_g2 = g2_chip.assign_point::<G2Affine>(circuit.main(0), el_circuit.taskResponseDigestBn254G2);
+    let multi_paired = pairing_chip.multi_miller_loop(circuit.main(0), vec![(&signers_g1_apk, &task_response_digest_bn254_g2), (&neg_rhs_g1, &aggregate_signature)]);
+    let fq12_chip = Fp12Chip::new(&fq_chip);
+    let result = fq12_chip.final_exp(circuit.main(0), multi_paired);
+    let fq12_one = fq12_chip.load_constant(circuit.main(0), Fq12::one());
+    let verification_result = fq12_chip.is_equal(circuit.main(0), result, fq12_one);
     // verification_result.cell.unwrap().offset
     
 
