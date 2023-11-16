@@ -232,6 +232,7 @@ dependencies = [
  "serde",
  "serde-wasm-bindgen",
  "serde_bytes",
+ "snark-verifier-sdk",
  "tsify",
  "web-sys",
 ]
@@ -836,6 +837,45 @@ checksum = "75872d278a8f37ef87fa0ddbda7802605cb18344497949862c0d4dcb291eba60"
 dependencies = [
  "digest",
  "keccak",
+]
+
+[[package]]
+name = "snark-verifier"
+version = "0.1.7"
+source = "git+https://github.com/axiom-crypto/snark-verifier.git?branch=develop#0c306577e58d4725fc3921d6c827168108373816"
+dependencies = [
+ "halo2-base",
+ "halo2-ecc",
+ "hex",
+ "itertools 0.11.0",
+ "lazy_static",
+ "num-bigint",
+ "num-integer",
+ "num-traits",
+ "pairing",
+ "rand",
+ "serde",
+]
+
+[[package]]
+name = "snark-verifier-sdk"
+version = "0.1.7"
+source = "git+https://github.com/axiom-crypto/snark-verifier.git?branch=develop#0c306577e58d4725fc3921d6c827168108373816"
+dependencies = [
+ "bincode",
+ "getset",
+ "halo2-base",
+ "hex",
+ "itertools 0.10.5",
+ "lazy_static",
+ "num-bigint",
+ "num-integer",
+ "num-traits",
+ "rand",
+ "rand_chacha",
+ "serde",
+ "serde_json",
+ "snark-verifier",
 ]
 
 [[package]]

@@ -10,6 +10,7 @@ edition = "2021"
 halo2-base = { git = "https://github.com/axiom-crypto/halo2-lib.git", package = "halo2-base", branch = "develop" }
 
 halo2-ecc = { git = "https://github.com/axiom-crypto/halo2-lib.git", package = "halo2-ecc", branch = "develop", default-features = false }
+snark-verifier-sdk = { git = "https://github.com/axiom-crypto/snark-verifier.git", branch = "develop", default-features = false, features = ["loader_halo2", "halo2-axiom"] }
 
 getrandom = { version = "0.2", features = ["js"] }
 rand = "0.8"
@@ -30,3 +31,32 @@ paste = "1.0.14"
 [features]
 default = ["rayon"]
 rayon = []
+
+[profile.dev]
+opt-level = 3
+debug = 2              # change to 0 or 2 for more or less debug info
+overflow-checks = true
+incremental = true
+
+# Local "release" mode, more optimized than dev but faster to compile than release
+[profile.local]
+inherits = "dev"
+opt-level = 3
+# Set this to 1 or 2 to get more useful backtraces
+debug = 1
+debug-assertions = false
+panic = 'unwind'
+# better recompile times
+incremental = true
+lto = "thin"
+codegen-units = 16
+
+[profile.release]
+opt-level = 3
+debug = false
+debug-assertions = false
+lto = "fat"
+# `codegen-units = 1` can lead to WORSE performance - always bench to find best profile for your machine!
+# codegen-units = 1
+panic = "unwind"
+incremental = false
