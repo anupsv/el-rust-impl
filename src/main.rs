@@ -1,19 +1,11 @@
-use std::io::BufReader;
-use std::rc::Rc;
-use std::{borrow::BorrowMut, cell::RefCell};
-
+use ark_std::{start_timer, end_timer};
 use crate::halo2_base::{
-    gates::circuit::{builder::BaseCircuitBuilder, BaseCircuitParams},
+    gates::circuit::builder::BaseCircuitBuilder,
     utils::BigPrimeField,
-    utils::{fs::gen_srs, value_to_option, ScalarField},
-    AssignedValue,
+    utils::{fs::gen_srs, ScalarField},
 };
-
 use halo2_base::gates::RangeChip;
-use halo2_base::halo2_proofs::halo2curves::bn256::{Fq12, G1};
-use halo2_base::halo2_proofs::halo2curves::ff::PrimeField;
-use halo2_base::halo2_proofs::halo2curves::CurveAffine;
-
+use halo2_base::halo2_proofs::halo2curves::bn256::Fq12;
 use halo2_ecc::bigint::ProperCrtUint;
 use halo2_ecc::{
     bn254::pairing::PairingChip,
@@ -25,26 +17,10 @@ use halo2_ecc::{
 use halo2_proofs::{
     circuit::Value,
     dev::MockProver,
-    halo2curves::bn256::{Bn256, Fq, Fr, G1Affine, G2Affine},
+    halo2curves::bn256::{Fr, G1Affine, G2Affine},
     plonk::*,
-    poly::{
-        commitment::{Params, ParamsProver},
-        kzg::{
-            commitment::{KZGCommitmentScheme, ParamsKZG},
-            multiopen::VerifierSHPLONK,
-            strategy::SingleStrategy,
-        },
-    },
 };
-use itertools::{concat, Itertools};
-use serde::{Deserialize, Serialize};
 use snark_verifier_sdk::halo2::gen_snark_shplonk;
-// use snark_verifier::system::halo2::transcript_initial_state;
-// use snark_verifier_sdk::{
-//     halo2::{gen_snark_shplonk, PoseidonTranscript, POSEIDON_SPEC},
-//     NativeLoader,
-// };
-use tsify::Tsify;
 
 pub use halo2_base;
 pub use halo2_base::halo2_proofs;
@@ -95,8 +71,8 @@ impl EigenLayerCircuit<Fr> {
 
 fn main() {
     let mut circuit = BaseCircuitBuilder::<Fr>::new(false)
-        .use_k(25)
-        .use_lookup_bits(22)
+        .use_k(20)
+        .use_lookup_bits(19)
         ;
 
     let limb_bits = 88;
@@ -114,7 +90,7 @@ fn main() {
 
     let el_circuit = EigenLayerCircuit::<Fr>::rand(10);
     let signers_g1_apk;
-    if el_circuit.non_signer_pubkeys.len() > 0 {
+    if !el_circuit.non_signer_pubkeys.is_empty() {
         let g1_points: Vec<_> = el_circuit
             .non_signer_pubkeys
             .into_iter()
@@ -122,7 +98,7 @@ fn main() {
             .collect();
         let all_operators_circuit_g1_apk = g1_chip
             .assign_point::<G1Affine>(circuit.main(0), el_circuit.all_operators_circuit_g1_apk);
-        let nonsigners_g1_apk = g1_chip.sum::<G1Affine>(circuit.main(0), g1_points.into_iter());
+        let nonsigners_g1_apk = g1_chip.sum::<G1Affine>(circuit.main(0), g1_points);
         signers_g1_apk = g1_chip.sub_unequal(
             circuit.main(0),
             all_operators_circuit_g1_apk,
@@ -153,19 +129,29 @@ fn main() {
     let fq12_chip = Fp12Chip::new(&fq_chip);
     let result = fq12_chip.final_exp(circuit.main(0), multi_paired);
     let fq12_one = fq12_chip.load_constant(circuit.main(0), Fq12::one());
-    let verification_result = fq12_chip.is_equal(circuit.main(0), result, fq12_one);
+    let _verification_result = fq12_chip.is_equal(circuit.main(0), result, fq12_one);
     // verification_result.cell.unwrap().offset
+    dbg!(_verification_result.value());
 
     let params = circuit.calculate_params(Some(20));
+    println!("params: {:?}", params);
     let circuit = circuit.use_params(params);
 
-    MockProver::run(25, &circuit, vec![])
+    MockProver::run(20, &circuit, vec![])
         .unwrap()
         .assert_satisfied();
 
-    let params = gen_srs(25);
-    let vk = keygen_vk(&params, &circuit).unwrap();
-    let pk = keygen_pk(&params, vk, &circuit).unwrap();
+    let params = gen_srs(20);
 
-    let snark = gen_snark_shplonk(&params, &pk, circuit, Some("el.snark"));
+    let vk_time = start_timer!(|| "VK generation time");
+    let vk = keygen_vk(&params, &circuit).unwrap();
+    end_timer!(vk_time);
+
+    let pk_time = start_timer!(|| "PK generation time");
+    let pk = keygen_pk(&params, vk, &circuit).unwrap();
+    end_timer!(pk_time);
+
+    let proof_time = start_timer!(|| "Proving time");
+    let _snark = gen_snark_shplonk(&params, &pk, circuit, Some("el.snark"));
+    end_timer!(proof_time);
 }
