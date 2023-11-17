@@ -4,15 +4,16 @@ use crate::halo2_base::{
     utils::BigPrimeField,
     utils::{fs::gen_srs, ScalarField},
 };
-use halo2_base::gates::RangeChip;
+use halo2_base::{gates::RangeChip, halo2_proofs::halo2curves::{bn256::G1, pasta::Fp}};
 use halo2_base::halo2_proofs::halo2curves::bn256::Fq12;
 use halo2_ecc::bigint::ProperCrtUint;
 use halo2_ecc::{
+    
     bn254::pairing::PairingChip,
     bn254::FpChip,
     ecc::EcPoint,
     ecc::EccChip,
-    fields::{fp::FpConfig, fp12::Fp12Chip, fp2::Fp2Chip, FieldChip},
+    fields::{fp::FpConfig, fp12::Fp12Chip, fp2::Fp2Chip, FieldChip}
 };
 use halo2_proofs::{
     circuit::Value,
@@ -26,6 +27,8 @@ pub use halo2_base;
 pub use halo2_base::halo2_proofs;
 pub struct Bn254G1AffinePoint(EcPoint<Fr, FqPoint>);
 type FqPoint = ProperCrtUint<Fr>;
+use rand_core::{RngCore, OsRng};
+
 
 struct EigenLayerConfig<F: BigPrimeField> {
     base_field_chip: FpConfig<F>,
@@ -38,41 +41,87 @@ struct EigenLayerCircuit<F: ScalarField> {
     g1_one: G1Affine,
 
     // Public inputs:
-    //
+    non_signer: Vec<Value<F>>,
     quorum_g1_apk: Value<G1Affine>,
     all_operators_circuit_g1_apk: G1Affine,
-    // sum of pubkeys of ALL operators (including non-signers)
-    aggregate_pubkey: Value<G2Affine>,
     task_response_digest_bn254_g2: G2Affine,
     aggregate_signature: G2Affine,
-    non_signer: Vec<Value<F>>,
     non_signer_pubkeys: Vec<G1Affine>,
 }
 
 impl EigenLayerCircuit<Fr> {
     fn rand(num_non_signers: usize) -> Self {
         let mut rng = rand::thread_rng();
+        // let non_signer_pubkeys: Vec<G1Affine> = (0..num_non_signers)
+        // .map(|_| G1Affine::random(&mut rng))
+        // .collect();
+
+        // take random point as the hash output
+        let task_response_digest_bn254_g2 = G2Affine::random(&mut rng);
+
+        let d0 = Fr::from_u64_digits(&[OsRng.next_u64(), OsRng.next_u64(), OsRng.next_u64(), OsRng.next_u64()]);
+        let d1 = Fr::from_u64_digits(&[OsRng.next_u64(), OsRng.next_u64(), OsRng.next_u64(), OsRng.next_u64()]);
+        // Convert to Montgomery form
+        let sk_all_operators_circuit_g1_apk = d0 * R2 + d1 * R3;
+        let signature: G2Affine = G2Affine::from(task_response_digest_bn254_g2 * sk_all_operators_circuit_g1_apk);
+
+        let mut all_operators_circuit_g1_apk = G1Affine::from(G1Affine::generator() * sk_all_operators_circuit_g1_apk);
+
+        let mut signatures: Vec<G2Affine> = Vec::new();
+        signatures.push(signature);
+        let mut pubkeys: Vec<G1Affine> = Vec::new();
+
+        /// `R^2 = 2^512 mod r`
+        /// `0x216d0b17f4e44a58c49833d53bb808553fe3ab1e35c59e31bb8e645ae216da7`
+        const R2: Fr = Fr::from_raw([
+            1997599621687373223,
+            6052339484930628067,
+            10108755138030829701,
+            150537098327114917,
+        ]);
+
+        /// `R^3 = 2^768 mod r`
+        /// `0xcf8594b7fcc657c893cc664a19fcfed2a489cbe1cfbb6b85e94d8e1b4bf0040`
+        const R3: Fr = Fr::from_raw([
+            6815310600030060608,
+            3046857488260118200,
+            9888997017309401069,
+            934595103480898940,
+        ]);
+
+
+        for _ in 0..num_non_signers {
+            let d0 = Fr::from_u64_digits(&[OsRng.next_u64(), OsRng.next_u64(), OsRng.next_u64(), OsRng.next_u64()]);
+            let d1 = Fr::from_u64_digits(&[OsRng.next_u64(), OsRng.next_u64(), OsRng.next_u64(), OsRng.next_u64()]);
+            // Convert to Montgomery form
+            let sk = d0 * R2 + d1 * R3;
+            // let signature: G2Affine = G2Affine::from(task_response_digest_bn254_g2 * sk);
+            let pubkey = G1Affine::from(G1Affine::generator() * sk);
+    
+            // signatures.push(signature);
+            pubkeys.push(pubkey);
+        }
+
+        for pubkey in pubkeys.iter() {
+            all_operators_circuit_g1_apk = (all_operators_circuit_g1_apk + pubkey).into();
+        }
+
         Self {
             g1_one: G1Affine::generator(),
             quorum_g1_apk: Value::known(G1Affine::random(&mut rng)),
-            all_operators_circuit_g1_apk: G1Affine::random(&mut rng),
-            aggregate_pubkey: Value::known(G2Affine::random(&mut rng)),
-            task_response_digest_bn254_g2: G2Affine::random(&mut rng),
-            aggregate_signature: G2Affine::random(&mut rng),
-            non_signer: (0..num_non_signers)
-                .map(|i| Value::known(Fr::from(2 * i as u64)))
-                .collect(),
-            non_signer_pubkeys: (0..num_non_signers)
-                .map(|_| G1Affine::random(&mut rng))
-                .collect(),
+            all_operators_circuit_g1_apk: all_operators_circuit_g1_apk,
+            task_response_digest_bn254_g2: task_response_digest_bn254_g2,
+            aggregate_signature: signature.clone(),
+            non_signer_pubkeys: pubkeys,
+            non_signer: (0..num_non_signers).map(|i| Value::known(Fr::from(2* i as u64))).collect(), 
         }
     }
 }
 
 fn main() {
     let mut circuit = BaseCircuitBuilder::<Fr>::new(false)
-        .use_k(20)
-        .use_lookup_bits(19)
+        .use_k(18)
+        .use_lookup_bits(17)
         ;
 
     let limb_bits = 88;
@@ -88,7 +137,7 @@ fn main() {
     let g1_chip = EccChip::new(&fq_chip);
     let g2_chip = EccChip::new(&fq2_chip);
 
-    let el_circuit = EigenLayerCircuit::<Fr>::rand(10);
+    let el_circuit = EigenLayerCircuit::<Fr>::rand(1000);
     let signers_g1_apk;
     if !el_circuit.non_signer_pubkeys.is_empty() {
         let g1_points: Vec<_> = el_circuit
@@ -137,11 +186,11 @@ fn main() {
     println!("params: {:?}", params);
     let circuit = circuit.use_params(params);
 
-    MockProver::run(20, &circuit, vec![])
+    MockProver::run(18, &circuit, vec![])
         .unwrap()
         .assert_satisfied();
 
-    let params = gen_srs(20);
+    let params = gen_srs(18);
 
     let vk_time = start_timer!(|| "VK generation time");
     let vk = keygen_vk(&params, &circuit).unwrap();
@@ -152,6 +201,6 @@ fn main() {
     end_timer!(pk_time);
 
     let proof_time = start_timer!(|| "Proving time");
-    let _snark = gen_snark_shplonk(&params, &pk, circuit, Some("el.snark"));
+    let _snark = gen_snark_shplonk(&params, &pk, circuit, Some("the.snark"));
     end_timer!(proof_time);
 }
