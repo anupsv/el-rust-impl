@@ -2,9 +2,9 @@ use ark_std::{start_timer, end_timer};
 use crate::halo2_base::{
     gates::circuit::builder::BaseCircuitBuilder,
     utils::BigPrimeField,
-    utils::{fs::gen_srs, ScalarField},
+    utils::fs::gen_srs,
 };
-use halo2_base::{gates::RangeChip, halo2_proofs::halo2curves::{bn256::G1, pasta::Fp}};
+use halo2_base::gates::RangeChip;
 use halo2_base::halo2_proofs::halo2curves::bn256::Fq12;
 use halo2_ecc::bigint::ProperCrtUint;
 use halo2_ecc::{
@@ -13,43 +13,32 @@ use halo2_ecc::{
     bn254::FpChip,
     ecc::EcPoint,
     ecc::EccChip,
-    fields::{fp::FpConfig, fp12::Fp12Chip, fp2::Fp2Chip, FieldChip}
+    fields::{fp12::Fp12Chip, fp2::Fp2Chip, FieldChip}
 };
 use halo2_proofs::{
-    circuit::Value,
     dev::MockProver,
     halo2curves::bn256::{Fr, G1Affine, G2Affine},
     plonk::*,
 };
 use snark_verifier_sdk::halo2::gen_snark_shplonk;
-
 pub use halo2_base;
 pub use halo2_base::halo2_proofs;
 pub struct Bn254G1AffinePoint(EcPoint<Fr, FqPoint>);
 type FqPoint = ProperCrtUint<Fr>;
 use rand_core::{RngCore, OsRng};
-
-
-struct EigenLayerConfig<F: BigPrimeField> {
-    base_field_chip: FpConfig<F>,
-    instance: Column<Instance>,
-}
+use ruint::uint;
 
 #[derive(Clone)]
-struct EigenLayerCircuit<F: ScalarField> {
+struct EigenLayerCircuit {
     // constant:
     g1_one: G1Affine,
-
-    // Public inputs:
-    non_signer: Vec<Value<F>>,
-    quorum_g1_apk: Value<G1Affine>,
     all_operators_circuit_g1_apk: G1Affine,
     task_response_digest_bn254_g2: G2Affine,
     aggregate_signature: G2Affine,
     non_signer_pubkeys: Vec<G1Affine>,
 }
 
-impl EigenLayerCircuit<Fr> {
+impl EigenLayerCircuit {
     fn rand(num_non_signers: usize) -> Self {
         let mut rng = rand::thread_rng();
         // let non_signer_pubkeys: Vec<G1Affine> = (0..num_non_signers)
@@ -106,19 +95,24 @@ impl EigenLayerCircuit<Fr> {
             all_operators_circuit_g1_apk = (all_operators_circuit_g1_apk + pubkey).into();
         }
 
+        let large_number = uint!(0x30644e72e131a029b85045b68181585d97816a916871ca8d3c208c16d87cfd47_U256);
+        println!("Parts: {:?}", large_number.into_limbs().map(|e| format!("0x{:x}", e)));
+        Fr::from_u64_digits(&large_number.into_limbs());
+
         Self {
             g1_one: G1Affine::generator(),
-            quorum_g1_apk: Value::known(G1Affine::random(&mut rng)),
             all_operators_circuit_g1_apk: all_operators_circuit_g1_apk,
             task_response_digest_bn254_g2: task_response_digest_bn254_g2,
             aggregate_signature: signature.clone(),
             non_signer_pubkeys: pubkeys,
-            non_signer: (0..num_non_signers).map(|i| Value::known(Fr::from(2* i as u64))).collect(), 
         }
+
     }
 }
 
+
 fn main() {
+
     let mut circuit = BaseCircuitBuilder::<Fr>::new(false)
         .use_k(18)
         .use_lookup_bits(17)
@@ -137,7 +131,7 @@ fn main() {
     let g1_chip = EccChip::new(&fq_chip);
     let g2_chip = EccChip::new(&fq2_chip);
 
-    let el_circuit = EigenLayerCircuit::<Fr>::rand(1000);
+    let el_circuit = EigenLayerCircuit::rand(1000);
     let signers_g1_apk;
     if !el_circuit.non_signer_pubkeys.is_empty() {
         let g1_points: Vec<_> = el_circuit
