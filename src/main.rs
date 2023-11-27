@@ -114,8 +114,8 @@ impl EigenLayerCircuit {
 fn main() {
 
     let mut circuit = BaseCircuitBuilder::<Fr>::new(false)
-        .use_k(18)
-        .use_lookup_bits(17)
+        .use_k(17)
+        .use_lookup_bits(16)
         ;
 
     let limb_bits = 88;
@@ -131,7 +131,7 @@ fn main() {
     let g1_chip = EccChip::new(&fq_chip);
     let g2_chip = EccChip::new(&fq2_chip);
 
-    let el_circuit = EigenLayerCircuit::rand(1000);
+    let el_circuit = EigenLayerCircuit::rand(10000);
     let signers_g1_apk;
     if !el_circuit.non_signer_pubkeys.is_empty() {
         let g1_points: Vec<_> = el_circuit
@@ -184,7 +184,7 @@ fn main() {
         .unwrap()
         .assert_satisfied();
 
-    let params = gen_srs(18);
+    let params = gen_srs(17);
 
     let vk_time = start_timer!(|| "VK generation time");
     let vk = keygen_vk(&params, &circuit).unwrap();

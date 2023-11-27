@@ -58,12 +58,32 @@ fn constrain_limbs_equality<F: BigPrimeField>(
 }
 
 type FqPoint = ProperCrtUint<Fr>;
+pub type JsCircuitValue = usize;
 pub struct Bn254G2AffinePoint(EcPoint<Fr, Fq2Point>);
-
 pub struct Halo2Lib {
     pub gate: GateChip<Fr>,
     pub range: RangeChip<Fr>,
     pub builder: Rc<RefCell<BaseCircuitBuilder<Fr>>>,
+}
+
+pub struct JsCircuitBn254G2Affine {
+    pub x: JsCircuitBn254Fq2,
+    pub y: JsCircuitBn254Fq2,
+}
+
+pub struct JsCircuitBn254G1Affine {
+    pub x: JsCircuitValue256,
+    pub y: JsCircuitValue256,
+}
+
+pub struct JsCircuitBn254Fq2 {
+    pub c0: JsCircuitValue256,
+    pub c1: JsCircuitValue256,
+}
+
+pub struct JsCircuitValue256 {
+    pub hi: JsCircuitValue,
+    pub lo: JsCircuitValue,
 }
 
 impl Halo2Lib {
@@ -122,20 +142,19 @@ impl Halo2Lib {
     
     /// Doesn't range check limbs of g1_point.
     /// Does not allow you to load identity point.
-    pub fn load_bn254_g1(&self, x:Fp, y:Fp) -> Bn254G1AffinePoint {
+    pub fn load_bn254_g1(&self, point: JsCircuitBn254G1Affine) -> Bn254G1AffinePoint {
         let fq_chip = self.bn254_fq_chip();
         let g1_chip = EccChip::new(&fq_chip);
-        self.load_bn254_g1_impl(&g1_chip, x, y);
+        self.load_bn254_g1_impl(&g1_chip, point)
     }
 
     /// Doesn't range check limbs of g1_point
     fn load_bn254_g1_impl(
         &self,
         g1_chip: &EccChip<Fr, Bn254FqChip<Fr>>,
-        x: Fp,
-        y: Fp,
+        point: JsCircuitBn254G1Affine,
     ) -> Bn254G1AffinePoint {
-        let [x, y] = [x, y]
+        let [x, y] = [point.x, point.y]
             .map(|c| self.load_generic_fp_impl::<Bn254Fq>(g1_chip.field_chip(), c));
         let pt = EcPoint::new(x, y);
         g1_chip.assert_is_on_curve::<Bn254G1Affine>(self.builder.borrow_mut().main(0), &pt);
@@ -144,11 +163,11 @@ impl Halo2Lib {
     
     /// Doesn't range check limbs of g2_point.
     /// Does not allow you to load identity point.
-    pub fn load_bn254_g2(&self, xc0: Fp, xc1: Fp, yc0: Fp, yc1: Fp) -> Bn254G2AffinePoint {
+    pub fn load_bn254_g2(&self, point: JsCircuitBn254G2Affine) -> Bn254G2AffinePoint {
         let fq_chip = self.bn254_fq_chip();
         let fq2_chip = Bn254Fq2Chip::new(&fq_chip);
         let g2_chip = EccChip::new(&fq2_chip);
-        self.load_bn254_g2_impl(&g2_chip, xc0, xc1, xc2, xc3)
+        self.load_bn254_g2_impl(&g2_chip, point)
     }
 
     pub fn bn254_g1_sum(&self, g1_points: &[G1Affine]) -> Bn254G1AffinePoint {
@@ -167,15 +186,12 @@ impl Halo2Lib {
     fn load_bn254_g2_impl(
         &self,
         g2_chip: &EccChip<Fr, Bn254Fq2Chip<Fr>>,
-        xc0: Fp,
-        xc1: Fp,
-        yc0: Fp,
-        yc1: Fp,
+        point: JsCircuitBn254G2Affine,
     ) -> Bn254G2AffinePoint {
         let fq_chip = g2_chip.field_chip().fp_chip();
-        let [x, y] = [[xc0, xc1], [yc0, yc1]].map(|c| {
-            let c0 = self.load_generic_fp_impl::<Bn254Fq>(fq_chip, c.0);
-            let c1 = self.load_generic_fp_impl::<Bn254Fq>(fq_chip, c.1);
+        let [x, y] = [point.x, point.y].map(|c| {
+            let c0 = self.load_generic_fp_impl::<Bn254Fq>(fq_chip, c.c0);
+            let c1 = self.load_generic_fp_impl::<Bn254Fq>(fq_chip, c.c1);
             FieldVector(vec![c0, c1])
         });
         let pt = EcPoint::new(x, y);
